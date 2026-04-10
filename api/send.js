@@ -1,31 +1,31 @@
 const nodemailer = require("nodemailer")
 const fs = require("fs")
-
-let queue = []
-let processing = false
-let ipCooldown = {}
+const path = require("path")
 
 const read = (p) => JSON.parse(fs.readFileSync(p))
-const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 
-const processQueue = async () => {
-  if (processing) return
-  processing = true
+module.exports = async (req, res) => {
+  try {
+    const apiKey = req.headers["x-api-key"] || req.query.apiKey
 
-  while (queue.length) {
-    const job = queue.shift()
-
-    let senders = []
-
-    try {
-      senders = read(process.cwd() + "/sender.json")
-    } catch {
-      job.res.status(500).json({ error: "Sender file error" })
-      continue
+    if (apiKey !== "fixmerah_secure_2026") {
+      return res.status(403).json({ error: "Forbidden" })
     }
 
-    let success = false
-    let usedSender = null
+    if (req.query.health) {
+      return res.status(200).json({
+        status: true,
+        message: "API OK"
+      })
+    }
+
+    const { to, subject, text } = req.query
+
+    if (!to || !subject || !text) {
+      return res.status(400).json({ error: "Bad request" })
+    }
+
+    let senders = read(path.join(__dirname, "../sender.json"))
 
     for (let sender of senders) {
       try {
@@ -39,96 +39,28 @@ const processQueue = async () => {
 
         await transporter.sendMail({
           from: sender.email,
-          to: job.to,
-          subject: job.subject,
-          text: job.text
+          to,
+          subject,
+          text
         })
 
-        success = true
-        usedSender = sender.email
-        break
+        return res.status(200).json({
+          status: true,
+          sender: sender.email
+        })
 
-      } catch {
-        continue
-      }
+      } catch {}
     }
 
-    job.res.status(200).json({
-      status: success,
-      sender: usedSender || "none"
+    return res.status(200).json({
+      status: false,
+      sender: "none"
     })
 
-    await sleep(1000)
+  } catch (e) {
+    return res.status(500).json({
+      error: "Internal error",
+      message: e.message
+    })
   }
-
-  processing = false
 }
-
-module.exports = async (req, res) => {
-  try {
-    const apiKey = req.headers["x-api-key"]
-
-    if (apiKey !== "fixmerah_secure_2026") {
-      return res.status(403).json({ error: "Forbidden" })
-    }
-
-    // ✅ Health check
-    if (req.query.health) {
-      return res.status(200).json({
-        status: true,
-        message: "API OK"
-      })
-    }
-
-    const ip = req.headers["x-forwarded-for"] || "unknown"
-
-    if (ipCooldown[ip] && Date.now() - ipCooldown[ip] < 1000) {
-      return res.status(429).json({ error: "Too fast" })
-    }
-
-    ipCooldown[ip] = Date.now()
-
-    const { to, subject, text } = req.query
-
-    if (!to || !subject || !text) {
-      return res.status(400).json({ error: "Bad request" })
-    }
-
-    queue.push({ to, subject, text, res })
-    processQueue()
-
-  } catch {
-    res.status(500).json({ error: "Internal error" })
-  }
-}}
-
-module.exports = async (req, res) => {
-  try {
-    const apiKey = req.headers["x-api-key"]
-
-    if (apiKey !== "fixmerah_secure_2026") {
-      return res.status(403).json({ error: "Forbidden" })
-    }
-
-    const ip = req.headers["x-forwarded-for"] || "unknown"
-
-    if (ipCooldown[ip] && Date.now() - ipCooldown[ip] < 1000) {
-      return res.status(429).json({ error: "Too fast" })
-    }
-
-    ipCooldown[ip] = Date.now()
-
-    const { to, subject, text } = req.query
-
-    if (!to || !subject || !text) {
-      return res.status(400).json({ error: "Bad request" })
-    }
-
-    queue.push({ to, subject, text, res })
-
-    processQueue()
-
-  } catch {
-    res.status(500).json({ error: "Internal error" })
-  }
-                                  }
